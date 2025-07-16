@@ -11,12 +11,11 @@ export async function sendEmailNotification(order) {
   });
 
   const mailOptions = {
-    from: `"Shopify Bot" <${process.env.SMTP_USER}>`,
+    from: `"Zlatna Ribka Order Edit" <${process.env.SMTP_USER}>`,
     to: process.env.NOTIFY_EMAIL,
-    subject: `Поръчка ${order.name} е редактирана`,
+    subject: `Клиент редактира поръчка ${order.name}`,
     text: `Поръчка ${order.name} беше редактирана.
 
-Идентификатор: ${order.id}
 Клиент: ${order.customer.first_name} ${order.customer.last_name}
 Имейл: ${order.email}
 
