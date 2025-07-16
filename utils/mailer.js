@@ -14,7 +14,13 @@ export async function sendEmailNotification(order) {
     from: `"Shopify Bot" <${process.env.SMTP_USER}>`,
     to: process.env.NOTIFY_EMAIL,
     subject: `Поръчка ${order.name} е редактирана`,
-    text: `Поръчката съдържа таг: ${order.tags}\n\nЛинк: https://${process.env.SHOPIFY_STORE}/admin/orders/${order.id}`
+    text: `Поръчка ${order.name} беше редактирана.
+
+Идентификатор: ${order.id}
+Клиент: ${order.customer.first_name} ${order.customer.last_name}
+Имейл: ${order.email}
+
+Виж поръчката: https://${process.env.SHOPIFY_STORE}/admin/orders/${order.id}`
   };
 
   await transporter.sendMail(mailOptions);
