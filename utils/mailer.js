@@ -11,7 +11,7 @@ export async function sendEmailNotification(order) {
   });
 
   const mailOptions = {
-    from: `"Zlatna Ribka Order Edit" <${process.env.SMTP_USER}>`,
+    from: `"Order Edit - Zlatna Ribka" <${process.env.SMTP_USER}>`,
     to: process.env.NOTIFY_EMAIL,
     subject: `Клиент редактира поръчка ${order.name}`,
     text: `Поръчка ${order.name} беше редактирана.
