@@ -1,9 +1,0 @@
-name = "shopify-order-hook"
-main = "src/worker.js"
-compatibility_date = "2025-09-17"
-
-# ако искаш само конкретен път (по желание):
-# routes = [{ pattern = "YOUR-SUBDOMAIN.workers.dev/webhooks/shopify", zone_id = "" }]
-
-[vars]
-# НЕ слагай чувствителни данни тук (ползвай Secrets в стъпка 3)
