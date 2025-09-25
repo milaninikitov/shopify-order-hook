@@ -9,19 +9,49 @@ export async function sendEmailNotification(order) {
   if (!to) throw new Error("Missing NOTIFY_EMAIL");
   if (!store) throw new Error("Missing SHOPIFY_STORE");
 
-  const subject = `Клиент редактира поръчка ${order?.name ?? order?.id ?? ""}`;
-  const text = `Поръчка ${order?.name ?? order?.id ?? ""} беше редактирана.
+  // --- Тагове и флагове ---
+  const tags = normalizeTags(order);
+  const hasItems   = tags.includes("coe:items_updated");
+  const hasAddress = tags.includes("coe:address_updated");
 
-Клиент: ${order?.customer?.first_name ?? ""} ${order?.customer?.last_name ?? ""}
-Имейл: ${order?.email ?? ""}
+  const orderRef = order?.name ?? order?.id ?? "";
 
-Виж поръчката: https://${store}/admin/orders/${order?.id}`;
+  // --- SUBJECT ---
+  const subject = `Клиент редактира поръчка ${orderRef}`;
 
-  const html = `<p>Поръчка <b>${escapeHtml(order?.name ?? order?.id ?? "")}</b> беше редактирана.</p>
-<p>Клиент: ${escapeHtml(order?.customer?.first_name ?? "")} ${escapeHtml(order?.customer?.last_name ?? "")}<br/>
-Имейл: ${escapeHtml(order?.email ?? "")}</p>
-<p><a href="https://${store}/admin/orders/${order?.id}">Отвори поръчката в Shopify</a></p>`;
+  // --- TEXT (plain) ---
+  const textLines = [];
+  textLines.push(`Поръчка ${orderRef} беше редактирана.`);
+  if (hasItems)   textLines.push(`Редакция на продукти.`);
+  if (hasAddress) textLines.push(`Редакция на адреса.`);
+  textLines.push(""); // празен ред
+  textLines.push(`Клиент: ${order?.customer?.first_name ?? ""} ${order?.customer?.last_name ?? ""}`);
+  textLines.push(`Имейл: ${order?.email ?? ""}`);
+  textLines.push("");
+  textLines.push(`Виж поръчката: https://${store}/admin/orders/${order?.id}`);
+  const text = textLines.join("\n");
 
+  // --- HTML ---
+  const htmlParts = [];
+  htmlParts.push(
+    `<p>Поръчка <b>${escapeHtml(orderRef)}</b> беше редактирана.</p>`
+  );
+  if (hasItems) {
+    htmlParts.push(`<p><i>Редакция на продукти.</i></p>`);
+  }
+  if (hasAddress) {
+    htmlParts.push(`<p><i>Редакция на адреса.</i></p>`);
+  }
+  htmlParts.push(
+    `<p>Клиент: ${escapeHtml(order?.customer?.first_name ?? "")} ${escapeHtml(order?.customer?.last_name ?? "")}<br/>
+Имейл: ${escapeHtml(order?.email ?? "")}</p>`
+  );
+  htmlParts.push(
+    `<p><a href="https://${store}/admin/orders/${order?.id}">Отвори поръчката в Shopify</a></p>`
+  );
+  const html = htmlParts.join("\n");
+
+  // --- Resend ---
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
 
@@ -44,6 +74,16 @@ export async function sendEmailNotification(order) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function normalizeTags(order) {
+  const t = order?.tags;
+  if (!t) return [];
+  if (Array.isArray(t)) return t.map(s => String(s).trim().toLowerCase()).filter(Boolean);
+  return String(t)
+    .split(",")
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 function escapeHtml(s = "") {
