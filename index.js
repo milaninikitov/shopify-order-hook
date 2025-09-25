@@ -8,58 +8,68 @@ dotenv.config();
 
 const app = express();
 
-// Shopify подписът се изчислява върху RAW тялото → взимаме го като текст
-app.use(express.text({ type: "*/*" }));
-
-function verifyShopifyHmac(rawBody, headerHmac, secret) {
-  if (!headerHmac || !secret) return false;
-  const digest = crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("base64");
-  try {
-    return crypto.timingSafeEqual(Buffer.from(digest, "utf8"), Buffer.from(headerHmac, "utf8"));
-  } catch {
-    return false;
-  }
-}
-
-app.post("/webhook/shopify/order-edited", async (req, res) => {
+/**
+ * ВАЖНО: За HMAC ни трябва RAW body (Buffer) за ТОЗИ маршрут.
+ * Не използвай глобално express.json() преди този рут.
+ */
+app.post("/webhook/shopify/order-edited", express.raw({ type: "application/json" }), async (req, res) => {
   const topic = req.get("X-Shopify-Topic") || "";
   const shopDomain = req.get("X-Shopify-Shop-Domain") || "";
   const headerHmac = req.get("X-Shopify-Hmac-SHA256") || "";
   const secret = process.env.SHOPIFY_WEBHOOK_SECRET;
-  const rawBody = req.body || "";
 
-  // 1) HMAC проверка
-  if (!verifyShopifyHmac(rawBody, headerHmac, secret)) {
+  // 1) HMAC валидация върху raw Buffer
+  const rawBody = req.body; // Buffer
+  if (!headerHmac || !secret) {
+    console.warn("❌ Missing HMAC header or secret");
+    return res.status(401).send("Invalid signature");
+  }
+  const digest = crypto.createHmac("sha256", secret).update(rawBody).digest("base64");
+  let ok = false;
+  try {
+    ok = crypto.timingSafeEqual(Buffer.from(digest, "utf8"), Buffer.from(headerHmac, "utf8"));
+  } catch { /* noop */ }
+  if (!ok) {
     console.warn("❌ HMAC verification failed");
     return res.status(401).send("Invalid signature");
   }
 
-  // 2) Приемаме само order теми
+  // 2) Приемаме само order теми (можеш да махнеш филтъра, ако искаш всичко)
   if (!/^orders\//.test(topic)) {
     console.log(`ℹ️ Ignoring topic ${topic} from ${shopDomain}`);
     return res.status(200).send("Ignored");
   }
 
-  // 3) Парсваме JSON след HMAC проверката
-  let payload;
+  // 3) Парсваме JSON
+  let order;
   try {
-    payload = JSON.parse(rawBody);
+    order = JSON.parse(rawBody.toString("utf8"));
   } catch (e) {
-    console.error("❌ Cannot parse JSON body:", e);
+    console.error("❌ Cannot parse JSON:", e);
     return res.status(400).send("Bad JSON");
   }
 
-  // 4) Пращаме имейл (HTTPS към Resend — няма SMTP)
-  try {
-    await sendEmailNotification(payload);
-    console.log(`✅ Email sent for order ${payload?.name ?? payload?.id ?? "?"}`);
-  } catch (e) {
-    console.error("❌ sendEmailNotification failed:", e);
-    // По избор: res.status(500) за Shopify retry; по-често се връща 200, за да не дърпа ретраии
+  // 4) Филтър по тагове: изпращаме имейл само ако има coe:items_updated или coe:address_updated
+  const tags = normalizeTags(order);
+  const watch = new Set(["coe:items_updated", "coe:address_updated"]);
+  const hasWatchedTag = tags.some(t => watch.has(t));
+
+  if (!hasWatchedTag) {
+    // Важно: връщаме 200, за да не ретрайва Shopify, но НЕ пращаме имейл
+    console.log(`↩️ No-op: order ${order?.name ?? order?.id ?? "?"} without watched tags. Got: [${tags.join(", ")}]`);
+    return res.status(200).send("No-op (tags filter)");
   }
 
-  // Shopify очаква бързо 200
-  res.status(200).send("OK");
+  // 5) Прати имейл (Resend през HTTPS)
+  try {
+    await sendEmailNotification(order);
+    console.log(`✅ Email sent for order ${order?.name ?? order?.id ?? "?"}`);
+  } catch (e) {
+    console.error("❌ sendEmailNotification failed:", e);
+    // по избор: можеш да върнеш 500, за да поискаш retry от Shopify
+  }
+
+  return res.status(200).send("OK");
 });
 
 app.get("/", (_req, res) => {
@@ -68,3 +78,18 @@ app.get("/", (_req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+/**
+ * Нормализира таговете от Shopify към масив от lower-case strings.
+ * - REST API често дава "tags" като comma-separated string.
+ * - GraphQL може да върне масив.
+ */
+function normalizeTags(order) {
+  const t = order?.tags;
+  if (!t) return [];
+  if (Array.isArray(t)) return t.map(s => String(s).trim().toLowerCase()).filter(Boolean);
+  return String(t)
+    .split(",")
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean);
+}
