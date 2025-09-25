@@ -37,10 +37,10 @@ export async function sendEmailNotification(order) {
     `<p>Поръчка <b>${escapeHtml(orderRef)}</b> беше редактирана.</p>`
   );
   if (hasItems) {
-    htmlParts.push(`<p><i>Редакция на продукти.</i></p>`);
+    htmlParts.push(`<p><strong>Редакция на продукти.</strong></p>`);
   }
   if (hasAddress) {
-    htmlParts.push(`<p><i>Редакция на адреса.</i></p>`);
+    htmlParts.push(`<p><strong>Редакция на адреса.</strong></p>`);
   }
   htmlParts.push(
     `<p>Клиент: ${escapeHtml(order?.customer?.first_name ?? "")} ${escapeHtml(order?.customer?.last_name ?? "")}<br/>
@@ -89,3 +89,4 @@ function normalizeTags(order) {
 function escapeHtml(s = "") {
   return s.replace(/[&<>"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[m]));
 }
+
