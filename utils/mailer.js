@@ -38,6 +38,7 @@ export async function sendEmailNotification(order) {
 
     if (!res.ok) {
       const body = await res.text();
+      console.error("Resend error:", res.status, body);
       throw new Error(`Resend failed: ${res.status} ${body}`);
     }
   } finally {
