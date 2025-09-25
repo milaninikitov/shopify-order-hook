@@ -1,105 +1,69 @@
 // index.js
-import express from 'express';
-import crypto from 'crypto';
-import { sendEmailNotification } from './utils/mailer.js';
-import dotenv from 'dotenv';
+import express from "express";
+import crypto from "crypto";
+import dotenv from "dotenv";
+import { sendEmailNotification } from "./utils/mailer.js";
 
 dotenv.config();
 
 const app = express();
 
-// ВАЖНО: за HMAC трябва "raw" тяло (string), не JSON парснато автоматично
-app.use(express.text({ type: '*/*' }));
+// Shopify подписът се изчислява върху RAW тялото → взимаме го като текст
+app.use(express.text({ type: "*/*" }));
 
-// Кеш за поръчки, за които вече е изпратен имейл (анти-дубликат)
-const notifiedOrders = new Map();
-
-/**
- * Проверка на Shopify HMAC подпис
- * - rawBody: оригиналното string тяло на заявката (точно така, както е получено)
- * - headerHmac: X-Shopify-Hmac-SHA256
- * - secret: SHOPIFY_WEBHOOK_SECRET от Shopify (същият, който си задал при създаване на webhook)
- */
 function verifyShopifyHmac(rawBody, headerHmac, secret) {
   if (!headerHmac || !secret) return false;
-  const digest = crypto
-    .createHmac('sha256', secret)
-    .update(rawBody, 'utf8')
-    .digest('base64');
-
+  const digest = crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("base64");
   try {
-    // timing-safe сравнение
-    return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(headerHmac));
+    return crypto.timingSafeEqual(Buffer.from(digest, "utf8"), Buffer.from(headerHmac, "utf8"));
   } catch {
     return false;
   }
 }
 
-app.post('/webhook/order-updated', async (req, res) => {
-  const raw = req.body; // string (заради express.text)
-  const headerHmac = req.get('X-Shopify-Hmac-SHA256') || '';
-  const topic = req.get('X-Shopify-Topic') || '';
+app.post("/webhook/shopify/order-edited", async (req, res) => {
+  const topic = req.get("X-Shopify-Topic") || "";
+  const shopDomain = req.get("X-Shopify-Shop-Domain") || "";
+  const headerHmac = req.get("X-Shopify-Hmac-SHA256") || "";
+  const secret = process.env.SHOPIFY_WEBHOOK_SECRET;
+  const rawBody = req.body || "";
 
   // 1) HMAC проверка
-  const ok = verifyShopifyHmac(raw, headerHmac, process.env.SHOPIFY_WEBHOOK_SECRET);
-  if (!ok) {
-    // отговаряме с 401, за да не ре-траи Shopify този уебхук
-    return res.status(401).send('Unauthorized');
+  if (!verifyShopifyHmac(rawBody, headerHmac, secret)) {
+    console.warn("❌ HMAC verification failed");
+    return res.status(401).send("Invalid signature");
   }
 
-  // 2) Парсваме JSON payload-а
-  let order;
+  // 2) Приемаме само order теми
+  if (!/^orders\//.test(topic)) {
+    console.log(`ℹ️ Ignoring topic ${topic} from ${shopDomain}`);
+    return res.status(200).send("Ignored");
+  }
+
+  // 3) Парсваме JSON след HMAC проверката
+  let payload;
   try {
-    order = JSON.parse(raw);
-  } catch {
-    return res.status(400).send('Bad JSON');
+    payload = JSON.parse(rawBody);
+  } catch (e) {
+    console.error("❌ Cannot parse JSON body:", e);
+    return res.status(400).send("Bad JSON");
   }
 
-  const orderId = order?.id;
+  // 4) Пращаме имейл (HTTPS към Resend — няма SMTP)
+  try {
+    await sendEmailNotification(payload);
+    console.log(`✅ Email sent for order ${payload?.name ?? payload?.id ?? "?"}`);
+  } catch (e) {
+    console.error("❌ sendEmailNotification failed:", e);
+    // По избор: res.status(500) за Shopify retry; по-често се връща 200, за да не дърпа ретраии
+  }
 
-  // 3) Връщаме 200 веднага (Shopify се интересува само от статуса)
-  res.status(200).send('Webhook received');
-
-  // 4) Отложена обработка (твоята 2-минутна логика)
-  setTimeout(async () => {
-    try {
-      // (по желание) проверка, че наистина е order update
-      if (topic && !topic.includes('orders/update')) {
-        console.log(`ℹ️ Пропуснат topic: ${topic}`);
-        return;
-      }
-
-      // Анти-дубликат
-      if (notifiedOrders.has(orderId)) {
-        console.log(`🔁 Пропуснат дублиращ се имейл за поръчка ${orderId}`);
-        return;
-      }
-
-      // ✔️ Ползваме payload-а директно (Shopify праща пълната поръчка)
-      const updatedOrder = order;
-      const tags = updatedOrder?.tags || '';
-
-      if (tags.includes('coe:address_updated') || tags.includes('coe:items_updated')) {
-        await sendEmailNotification(updatedOrder);
-
-        // Маркираме поръчката като "уведомена"
-        notifiedOrders.set(orderId, true);
-
-        // Изчистваме флага след 30 минути (ако дойде още един уебхук по-късно)
-        setTimeout(() => {
-          notifiedOrders.delete(orderId);
-        }, 30 * 60 * 1000);
-      } else {
-        console.log(`ℹ️ Поръчка ${orderId} без релевантни тагове, няма да пращаме имейл.`);
-      }
-    } catch (error) {
-      console.error('Error processing webhook:', error.message);
-    }
-  }, 2 * 60 * 1000); // за тест можеш временно да намалиш на 10 сек
+  // Shopify очаква бързо 200
+  res.status(200).send("OK");
 });
 
-app.get('/', (_req, res) => {
-  res.send('Shopify webhook listener running.');
+app.get("/", (_req, res) => {
+  res.send("Shopify webhook listener running.");
 });
 
 const PORT = process.env.PORT || 3000;
