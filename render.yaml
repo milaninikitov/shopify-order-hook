@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: shopify-order-hook
+    env: node
+    plan: free
+    runtime: node
+    region: frankfurt
+    buildCommand: ""
+    startCommand: "node index.js"
+    autoDeploy: true
+    envVars:
+      - key: SHOPIFY_STORE
+        sync: false
+      - key: SHOPIFY_WEBHOOK_SECRET
+        sync: false
+      - key: SHOPIFY_API_TOKEN
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: NOTIFY_EMAIL
+        sync: false
+      - key: ALERT_EMAIL_FROM
+        sync: false
+      - key: PORT
+        value: "3000"
