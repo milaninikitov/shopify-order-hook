@@ -9,8 +9,8 @@ dotenv.config();
 const app = express();
 
 /**
- * ВАЖНО: За HMAC ни трябва RAW body (Buffer) за ТОЗИ маршрут.
- * Не използвай глобално express.json() преди този рут.
+ * ВАЖНО: За HMAC трябва raw body (Buffer) само за този маршрут.
+ * Не добавяй глобално express.json() преди този рут.
  */
 app.post("/webhook/shopify/order-edited", express.raw({ type: "application/json" }), async (req, res) => {
   const topic = req.get("X-Shopify-Topic") || "";
@@ -18,8 +18,9 @@ app.post("/webhook/shopify/order-edited", express.raw({ type: "application/json"
   const headerHmac = req.get("X-Shopify-Hmac-SHA256") || "";
   const secret = process.env.SHOPIFY_WEBHOOK_SECRET;
 
-  // 1) HMAC валидация върху raw Buffer
   const rawBody = req.body; // Buffer
+
+  // 1) HMAC валидация
   if (!headerHmac || !secret) {
     console.warn("❌ Missing HMAC header or secret");
     return res.status(401).send("Invalid signature");
@@ -49,24 +50,30 @@ app.post("/webhook/shopify/order-edited", express.raw({ type: "application/json"
     return res.status(400).send("Bad JSON");
   }
 
-  // 4) Филтър по тагове: изпращаме имейл само ако има coe:items_updated или coe:address_updated
+  // 4) Филтър по тагове: пращаме имейл само ако има coe:items_updated или coe:address_updated
   const tags = normalizeTags(order);
   const watch = new Set(["coe:items_updated", "coe:address_updated"]);
   const hasWatchedTag = tags.some(t => watch.has(t));
-
   if (!hasWatchedTag) {
-    // Важно: връщаме 200, за да не ретрайва Shopify, но НЕ пращаме имейл
     console.log(`↩️ No-op: order ${order?.name ?? order?.id ?? "?"} without watched tags. Got: [${tags.join(", ")}]`);
     return res.status(200).send("No-op (tags filter)");
   }
 
-  // 5) Прати имейл (Resend през HTTPS)
+  // 5) НЕ изпращаме имейл, ако ъпдейтът е свързан с fulfillment (fulfilled/partial)
+  const fulfillmentStatus = String(order?.fulfillment_status || "").toLowerCase();
+  const isFulfillmentUpdate = fulfillmentStatus === "fulfilled" || fulfillmentStatus === "partial";
+  if (isFulfillmentUpdate) {
+    console.log(`↩️ No-op: fulfillment update for ${order?.name ?? order?.id ?? "?"} (status=${fulfillmentStatus})`);
+    return res.status(200).send("No-op (fulfillment)");
+  }
+
+  // 6) Пращаме имейл (Resend през HTTPS)
   try {
     await sendEmailNotification(order);
     console.log(`✅ Email sent for order ${order?.name ?? order?.id ?? "?"}`);
   } catch (e) {
     console.error("❌ sendEmailNotification failed:", e);
-    // по избор: можеш да върнеш 500, за да поискаш retry от Shopify
+    // по избор: върни 500, за да накараш Shopify да ретрайнe
   }
 
   return res.status(200).send("OK");
